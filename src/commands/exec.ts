@@ -7,6 +7,21 @@ import {
 } from "../utils/exit-codes";
 import { Vault } from "../vault/vault";
 
+/**
+ * Expand $VAR and ${VAR} references in a string using the given env.
+ * Only expands known variables; unknown references are left as-is.
+ */
+export function expandEnvVars(
+  arg: string,
+  env: Record<string, string | undefined>,
+): string {
+  const pattern = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g;
+  return arg.replace(pattern, (match, braced, bare) => {
+    const name = braced || bare;
+    return name in env ? (env[name] ?? "") : match;
+  });
+}
+
 interface ExecOptions {
   noMask?: boolean;
   env?: string;
@@ -114,10 +129,13 @@ export async function exec(
     ? Array.from(secrets.values()).filter((v) => v.length > 0)
     : [];
 
-  const child = spawn(cmd, args, {
+  // Expand $VAR and ${VAR} in args ourselves (safe, no shell involved)
+  const expandedArgs = args.map((arg) => expandEnvVars(arg, env));
+
+  const child = spawn(cmd, expandedArgs, {
     env,
     stdio: shouldMask ? ["inherit", "pipe", "pipe"] : "inherit",
-    shell: true,
+    shell: false,
   });
 
   if (shouldMask && child.stdout && child.stderr) {

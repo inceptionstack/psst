@@ -6,7 +6,7 @@ import {
   EXIT_USER_ERROR,
 } from "../utils/exit-codes";
 import { Vault } from "../vault/vault";
-import { maskSecrets } from "./exec";
+import { expandEnvVars, maskSecrets } from "./exec";
 
 interface RunOptions {
   noMask?: boolean;
@@ -87,10 +87,13 @@ export async function run(
     ? Array.from(secrets.values()).filter((v) => v.length > 0)
     : [];
 
-  const child = spawn(cmd, args, {
+  // Expand $VAR and ${VAR} in args ourselves (safe, no shell involved)
+  const expandedArgs = args.map((arg) => expandEnvVars(arg, env));
+
+  const child = spawn(cmd, expandedArgs, {
     env,
     stdio: shouldMask ? ["inherit", "pipe", "pipe"] : "inherit",
-    shell: true,
+    shell: false,
   });
 
   if (shouldMask && child.stdout && child.stderr) {
