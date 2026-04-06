@@ -1,16 +1,16 @@
 {
   "name": "psst-cli",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "AI-native secrets manager. Agents use secrets without seeing them.",
   "module": "src/index.ts",
-  "main": "src/index.ts",
+  "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "type": "module",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "bun": "./src/index.ts",
-      "default": "./src/index.ts"
+      "default": "./dist/index.js"
     }
   },
   "bin": {
@@ -24,7 +24,7 @@
     "dev": "bun run src/main.ts",
     "build": "bun build --compile src/main.ts --outfile psst",
     "build:types": "tsc",
-    "prepublishOnly": "bun run build:types",
+    "prepublishOnly": "npx tsc",
     "build:linux": "bun build --compile --target=bun-linux-x64 src/main.ts --outfile psst-linux-x64",
     "build:mac-arm": "bun build --compile --target=bun-darwin-arm64 src/main.ts --outfile psst-darwin-arm64",
     "build:mac-x64": "bun build --compile --target=bun-darwin-x64 src/main.ts --outfile psst-darwin-x64",

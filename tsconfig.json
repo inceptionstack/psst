@@ -14,7 +14,7 @@
     "rootDir": "src",
     "declaration": true,
     "declarationDir": "dist",
-    "emitDeclarationOnly": true,
+
     "outDir": "dist",
     "types": ["bun-types"]
   },
