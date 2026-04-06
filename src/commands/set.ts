@@ -1,8 +1,8 @@
 import chalk from "chalk";
-import { EXIT_USER_ERROR } from "../utils/exit-codes";
-import { readSecretValue, readStdin } from "../utils/input";
-import type { OutputOptions } from "../utils/output";
-import { getUnlockedVault } from "./common";
+import { EXIT_USER_ERROR } from "../utils/exit-codes.js";
+import { readSecretValue, readStdin } from "../utils/input.js";
+import type { OutputOptions } from "../utils/output.js";
+import { getUnlockedVault } from "./common.js";
 
 interface SetOptions extends OutputOptions {
   stdin?: boolean;

@@ -1,4 +1,4 @@
-import type { OutputOptions } from "./output";
+import type { OutputOptions } from "./output.js";
 
 /**
  * Read password from stdin with echo disabled

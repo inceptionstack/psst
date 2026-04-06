@@ -1,9 +1,9 @@
-import { type SqliteDatabase, openDatabase } from "./database";
+import { type SqliteDatabase, openDatabase } from "./database.js";
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { decrypt, encrypt, keyToBuffer } from "./crypto";
-import { generateKey, getKey, isKeychainAvailable, storeKey } from "./keychain";
+import { decrypt, encrypt, keyToBuffer } from "./crypto.js";
+import { generateKey, getKey, isKeychainAvailable, storeKey } from "./keychain.js";
 
 const VAULT_DIR_NAME = ".psst";
 const DB_NAME = "vault.db";

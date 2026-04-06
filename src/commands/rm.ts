@@ -1,7 +1,7 @@
 import chalk from "chalk";
-import { EXIT_USER_ERROR } from "../utils/exit-codes";
-import type { OutputOptions } from "../utils/output";
-import { getUnlockedVault } from "./common";
+import { EXIT_USER_ERROR } from "../utils/exit-codes.js";
+import type { OutputOptions } from "../utils/output.js";
+import { getUnlockedVault } from "./common.js";
 
 export async function rm(
   name: string,

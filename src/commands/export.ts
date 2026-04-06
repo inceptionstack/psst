@@ -1,6 +1,6 @@
 import chalk from "chalk";
-import type { OutputOptions } from "../utils/output";
-import { getUnlockedVault } from "./common";
+import type { OutputOptions } from "../utils/output.js";
+import { getUnlockedVault } from "./common.js";
 
 interface ExportOptions extends OutputOptions {
   envFile?: string;

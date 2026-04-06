@@ -2,9 +2,9 @@ import { execSync } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import chalk from "chalk";
-import { EXIT_ERROR, EXIT_USER_ERROR } from "../utils/exit-codes";
-import type { OutputOptions } from "../utils/output";
-import { getUnlockedVault } from "./common";
+import { EXIT_ERROR, EXIT_USER_ERROR } from "../utils/exit-codes.js";
+import type { OutputOptions } from "../utils/output.js";
+import { getUnlockedVault } from "./common.js";
 
 interface ScanMatch {
   file: string;

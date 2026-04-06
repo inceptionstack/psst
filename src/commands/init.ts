@@ -1,9 +1,9 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import chalk from "chalk";
-import { EXIT_ERROR, EXIT_USER_ERROR } from "../utils/exit-codes";
-import type { OutputOptions } from "../utils/output";
-import { Vault } from "../vault/vault";
+import { EXIT_ERROR, EXIT_USER_ERROR } from "../utils/exit-codes.js";
+import type { OutputOptions } from "../utils/output.js";
+import { Vault } from "../vault/vault.js";
 
 export async function init(
   args: string[],

@@ -1,9 +1,9 @@
 import { existsSync } from "node:fs";
 import chalk from "chalk";
-import { EXIT_USER_ERROR } from "../utils/exit-codes";
-import { readStdin } from "../utils/input";
-import type { OutputOptions } from "../utils/output";
-import { getUnlockedVault } from "./common";
+import { EXIT_USER_ERROR } from "../utils/exit-codes.js";
+import { readStdin } from "../utils/input.js";
+import type { OutputOptions } from "../utils/output.js";
+import { getUnlockedVault } from "./common.js";
 
 interface ImportOptions extends OutputOptions {
   stdin?: boolean;

@@ -1,6 +1,6 @@
 import chalk from "chalk";
-import type { OutputOptions } from "../utils/output";
-import { Vault } from "../vault/vault";
+import type { OutputOptions } from "../utils/output.js";
+import { Vault } from "../vault/vault.js";
 
 export async function listEnvs(options: OutputOptions = {}): Promise<void> {
   const globalEnvs = Vault.listEnvironments(true);

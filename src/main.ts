@@ -1,20 +1,20 @@
 #!/usr/bin/env bun
 
-import { version } from "../package.json";
-import { exec } from "./commands/exec";
-import { exportSecrets } from "./commands/export";
-import { get } from "./commands/get";
-import { history } from "./commands/history";
-import { importSecrets } from "./commands/import";
-import { init } from "./commands/init";
-import { list } from "./commands/list";
-import { listEnvs } from "./commands/list-envs";
-import { rm } from "./commands/rm";
-import { rollback } from "./commands/rollback";
-import { run } from "./commands/run";
-import { scan } from "./commands/scan";
-import { set } from "./commands/set";
-import { tag, untag } from "./commands/tag";
+import pkg from "../package.json" with { type: "json" };
+import { exec } from "./commands/exec.js";
+import { exportSecrets } from "./commands/export.js";
+import { get } from "./commands/get.js";
+import { history } from "./commands/history.js";
+import { importSecrets } from "./commands/import.js";
+import { init } from "./commands/init.js";
+import { list } from "./commands/list.js";
+import { listEnvs } from "./commands/list-envs.js";
+import { rm } from "./commands/rm.js";
+import { rollback } from "./commands/rollback.js";
+import { run } from "./commands/run.js";
+import { scan } from "./commands/scan.js";
+import { set } from "./commands/set.js";
+import { tag, untag } from "./commands/tag.js";
 
 const HELP = `
 psst - AI-native secrets manager
@@ -150,9 +150,9 @@ async function main() {
 
   if (cleanArgs[0] === "--version" || cleanArgs[0] === "-v") {
     if (json) {
-      console.log(JSON.stringify({ version }));
+      console.log(JSON.stringify({ version: pkg.version }));
     } else if (!quiet) {
-      console.log(`psst ${version}`);
+      console.log(`psst ${pkg.version}`);
     }
     process.exit(0);
   }

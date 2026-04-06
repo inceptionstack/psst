@@ -4,9 +4,9 @@ import {
   EXIT_AUTH_FAILED,
   EXIT_NO_VAULT,
   EXIT_USER_ERROR,
-} from "../utils/exit-codes";
-import { Vault } from "../vault/vault";
-import { expandEnvVars, maskSecrets } from "./exec";
+} from "../utils/exit-codes.js";
+import { Vault } from "../vault/vault.js";
+import { expandEnvVars, maskSecrets } from "./exec.js";
 
 interface RunOptions {
   noMask?: boolean;

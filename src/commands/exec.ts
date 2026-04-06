@@ -4,8 +4,8 @@ import {
   EXIT_AUTH_FAILED,
   EXIT_NO_VAULT,
   EXIT_USER_ERROR,
-} from "../utils/exit-codes";
-import { Vault } from "../vault/vault";
+} from "../utils/exit-codes.js";
+import { Vault } from "../vault/vault.js";
 
 /**
  * Expand $VAR and ${VAR} references in a string using the given env.

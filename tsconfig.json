@@ -1,9 +1,9 @@
 {
   "compilerOptions": {
     "lib": ["ESNext"],
-    "module": "esnext",
+    "module": "nodenext",
     "target": "esnext",
-    "moduleResolution": "bundler",
+    "moduleResolution": "nodenext",
     "moduleDetection": "force",
     "strict": true,
     "skipLibCheck": true,
@@ -11,6 +11,7 @@
     "allowSyntheticDefaultImports": true,
     "forceConsistentCasingInFileNames": true,
     "allowJs": true,
+    "resolveJsonModule": true,
     "rootDir": "src",
     "declaration": true,
     "declarationDir": "dist",

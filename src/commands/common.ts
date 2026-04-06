@@ -1,7 +1,7 @@
 import chalk from "chalk";
-import { EXIT_AUTH_FAILED, EXIT_NO_VAULT } from "../utils/exit-codes";
-import type { OutputOptions } from "../utils/output";
-import { Vault } from "../vault/vault";
+import { EXIT_AUTH_FAILED, EXIT_NO_VAULT } from "../utils/exit-codes.js";
+import type { OutputOptions } from "../utils/output.js";
+import { Vault } from "../vault/vault.js";
 
 export async function getUnlockedVault(
   options: OutputOptions = {},
