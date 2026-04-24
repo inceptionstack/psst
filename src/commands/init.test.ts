@@ -1,5 +1,5 @@
 /**
- * Integration tests for `psst init --backend aws` \u2014 exercises the CLI
+ * Integration tests for `psst init --backend aws` — exercises the CLI
  * through a subprocess so we cover the argv parsing, config file writing,
  * and findVaultPath lookup in one shot.
  */
