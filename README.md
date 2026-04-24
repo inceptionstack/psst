@@ -70,9 +70,6 @@ This is what you get out of the box: a local SQLite DB encrypted with AES-256-GC
 When you're running on EC2 with an IAM role, or you want secrets shared across machines, use the AWS backend:
 
 ```bash
-# Install the AWS SDK (only needed for the AWS backend)
-npm install @aws-sdk/client-secrets-manager @aws-sdk/credential-providers
-
 psst init --backend aws \
   --aws-region us-east-1 \
   --aws-prefix psst/            # optional, default "psst/"
