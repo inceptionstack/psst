@@ -814,14 +814,17 @@ export class AwsBackend implements VaultBackend {
     }
 
     // Restore both value and tags from the historical version.
-    // Wrap in try/catch so that a concurrent ownership change (e.g.,
-    // someone removing the psst:managed tag via the AWS console mid-
-    // rollback) returns false instead of throwing, matching the boolean
-    // contract callers expect.
+    // Catch the specific ownership-guard error from setSecret so that a
+    // concurrent psst:managed tag removal (e.g., via the AWS console)
+    // returns false instead of throwing, matching the boolean contract.
+    // All other errors (network, credentials, service) propagate normally.
     try {
       await this.setSecret(name, envelope.value, envelope.tags);
-    } catch {
-      return false;
+    } catch (err) {
+      if (err instanceof Error && /not managed by psst/i.test(err.message)) {
+        return false;
+      }
+      throw err;
     }
     return true;
   }
