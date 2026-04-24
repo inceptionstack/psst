@@ -477,6 +477,18 @@ export class AwsBackend implements VaultBackend {
     }
   }
 
+  /**
+   * Replace all user tags on a secret.
+   *
+   * NOTE: tag-only mutations intentionally update only AWS resource tags,
+   * NOT the JSON envelope stored in SecretString. This means the AWSCURRENT
+   * envelope's embedded tags may diverge from the live resource tags. This
+   * is a deliberate trade-off: rewriting the envelope on every tag change
+   * creates a new AWS version (polluting history). Since getTags() reads
+   * resource tags (the source of truth) and rollback() restores the
+   * historical envelope's tags (correct for that point in time), the
+   * divergence is harmless in practice.
+   */
   async setTags(name: string, tags: string[]): Promise<boolean> {
     const awsName = this.toAwsName(name);
     const desc = await this.describeTags(awsName);

@@ -123,7 +123,11 @@ function normalizeConfig(raw: unknown, configPath: string): VaultConfig {
   const result: VaultConfig = { backend };
 
   if (backend === "aws") {
-    const awsRaw = (obj.aws ?? {}) as Record<string, unknown>;
+    const rawAws = obj.aws ?? {};
+    if (typeof rawAws !== "object" || rawAws === null || Array.isArray(rawAws)) {
+      throw new Error(`aws config must be a JSON object in ${configPath}`);
+    }
+    const awsRaw = rawAws as Record<string, unknown>;
     const aws: AwsBackendConfig = {};
 
     if (awsRaw.region !== undefined) {

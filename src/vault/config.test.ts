@@ -83,6 +83,22 @@ describe("vault config", () => {
       );
       expect(() => loadConfig(dir)).toThrow(/aws\.region must be a string/);
     });
+
+    it("rejects aws as a string", () => {
+      writeFileSync(
+        join(dir, "config.json"),
+        JSON.stringify({ backend: "aws", aws: "not-an-object" }),
+      );
+      expect(() => loadConfig(dir)).toThrow(/aws config must be a JSON object/);
+    });
+
+    it("rejects aws as an array", () => {
+      writeFileSync(
+        join(dir, "config.json"),
+        JSON.stringify({ backend: "aws", aws: [1, 2] }),
+      );
+      expect(() => loadConfig(dir)).toThrow(/aws config must be a JSON object/);
+    });
   });
 
   describe("saveConfig", () => {
