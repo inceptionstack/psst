@@ -96,17 +96,21 @@ export class AwsBackend implements VaultBackend {
     if (this.region) clientConfig.region = this.region;
 
     if (this.profile) {
+      // Load profile credentials via @aws-sdk/credential-providers. If the
+      // package isn't installed we fail loudly rather than mutate process.env
+      // (which would leak into subprocesses spawned by psst run/exec).
+      let credsMod: any;
       try {
-        const credsMod = await import("@aws-sdk/credential-providers");
-        clientConfig.credentials = (credsMod as any).fromNodeProviderChain({
-          profile: this.profile,
-        });
-      } catch {
-        // Fallback: the main SDK exposes fromIni via the default chain;
-        // if credential-providers isn't installed, let the default chain run
-        // with AWS_PROFILE env var instead.
-        process.env.AWS_PROFILE = this.profile;
+        credsMod = await import("@aws-sdk/credential-providers");
+      } catch (err: any) {
+        throw new Error(
+          `AWS --aws-profile requires @aws-sdk/credential-providers. ` +
+            `Install it: npm install @aws-sdk/credential-providers. (${err.message})`,
+        );
       }
+      clientConfig.credentials = credsMod.fromNodeProviderChain({
+        profile: this.profile,
+      });
     }
 
     this.client = new this.sdk.SecretsManagerClient(clientConfig);
@@ -293,9 +297,41 @@ export class AwsBackend implements VaultBackend {
 
   async getSecrets(names: string[]): Promise<Map<string, string>> {
     const result = new Map<string, string>();
-    for (const name of names) {
-      const value = await this.getSecret(name);
-      if (value !== null) result.set(name, value);
+    if (names.length === 0) return result;
+
+    const { sdk, client } = await this.getClient();
+    const awsNames = names.map((n) => this.toAwsName(n));
+
+    // BatchGetSecretValue accepts up to 20 SecretIds per call. Chunk the
+    // input so 'psst run' / 'psst exec' over large vaults stays fast.
+    const CHUNK = 20;
+    for (let i = 0; i < awsNames.length; i += CHUNK) {
+      const chunk = awsNames.slice(i, i + CHUNK);
+      try {
+        const resp: any = await client.send(
+          new sdk.BatchGetSecretValueCommand({ SecretIdList: chunk }),
+        );
+        for (const entry of resp.SecretValues ?? []) {
+          if (!entry.Name || entry.SecretString === undefined) continue;
+          const logical = this.fromAwsName(entry.Name);
+          if (logical === null) continue;
+          result.set(logical, this.decodeEnvelope(entry.SecretString).value);
+        }
+        // resp.Errors lists per-name errors (e.g., ResourceNotFoundException).
+        // We silently drop those — callers (run/exec) handle missing secrets
+        // via env-var fallback or explicit error messages.
+      } catch (err: any) {
+        // BatchGetSecretValue may not be available in every region/SDK
+        // version. Fall back to per-name GetSecretValue for this chunk.
+        if (err?.name === "UnknownCommandException" || err?.name === "ValidationException") {
+          for (const logical of names.slice(i, i + CHUNK)) {
+            const v = await this.getSecret(logical);
+            if (v !== null) result.set(logical, v);
+          }
+          continue;
+        }
+        throw err;
+      }
     }
     return result;
   }
@@ -399,8 +435,11 @@ export class AwsBackend implements VaultBackend {
     // filtering. We intentionally do NOT rewrite the SecretString envelope
     // here — PutSecretValue always creates a new AWS version, which would
     // produce spurious 'psst history' entries for pure tag changes. The
-    // payload's embedded tags become stale, but no code path reads them
-    // back (listSecrets and getTags both use resource tags).
+    // payload's embedded tags therefore become stale after a tag-only
+    // change, but the only read path that returns envelope tags is
+    // getHistory (for the historical version in question), where the
+    // tags represent "tags at the time of archival" — which by definition
+    // doesn't move when a tag is applied to the current version.
     await this.syncResourceTags(awsName, tags);
 
     return true;
@@ -464,24 +503,8 @@ export class AwsBackend implements VaultBackend {
     const { sdk, client } = await this.getClient();
     const awsName = this.toAwsName(name);
 
-    let resp: any;
-    try {
-      resp = await client.send(
-        new sdk.ListSecretVersionIdsCommand({
-          SecretId: awsName,
-          IncludeDeprecated: true,
-        }),
-      );
-    } catch (err: any) {
-      if (err?.name === "ResourceNotFoundException") return [];
-      throw err;
-    }
-
-    const versions = (resp.Versions ?? []) as Array<{
-      VersionId?: string;
-      CreatedDate?: Date;
-      VersionStages?: string[];
-    }>;
+    const versions = await this.listAllVersions(awsName);
+    if (versions === null) return [];
 
     // Identify the current version — any entry with AWSCURRENT stage.
     // Exclude it from the history list (it represents the live secret).
@@ -496,11 +519,35 @@ export class AwsBackend implements VaultBackend {
         (b.CreatedDate ? b.CreatedDate.getTime() : 0),
     );
 
+    // Fetch each historical envelope to recover the tags that were in
+    // effect at archival time (matches SqliteBackend.getHistory, whose
+    // rows carry their own archived tags column). This is O(history),
+    // but history lists are capped at 100 AWS versions per secret and
+    // history is called rarely (interactive 'psst history <name>').
+    // Fetches run in parallel.
+    const envelopes = await Promise.all(
+      nonCurrent.map(async (v) => {
+        if (!v.VersionId) return { tags: [] as string[] };
+        try {
+          const resp: any = await client.send(
+            new sdk.GetSecretValueCommand({
+              SecretId: awsName,
+              VersionId: v.VersionId,
+            }),
+          );
+          if (!resp.SecretString) return { tags: [] as string[] };
+          return { tags: this.decodeEnvelope(resp.SecretString).tags };
+        } catch {
+          return { tags: [] as string[] };
+        }
+      }),
+    );
+
     // Assign monotonic version numbers (oldest = 1), then return in
     // newest-first order to match SqliteBackend.getHistory().
     const numbered: SecretHistoryRecord[] = nonCurrent.map((v, idx) => ({
       version: idx + 1,
-      tags: [], // AWS versions don't carry tags; we'd need to fetch each one
+      tags: envelopes[idx].tags,
       archived_at: this.toIsoString(v.CreatedDate),
     }));
 
@@ -533,26 +580,8 @@ export class AwsBackend implements VaultBackend {
     awsName: string,
     version: number,
   ): Promise<string | null> {
-    const { sdk, client } = await this.getClient();
-
-    let resp: any;
-    try {
-      resp = await client.send(
-        new sdk.ListSecretVersionIdsCommand({
-          SecretId: awsName,
-          IncludeDeprecated: true,
-        }),
-      );
-    } catch (err: any) {
-      if (err?.name === "ResourceNotFoundException") return null;
-      throw err;
-    }
-
-    const versions = (resp.Versions ?? []) as Array<{
-      VersionId?: string;
-      CreatedDate?: Date;
-      VersionStages?: string[];
-    }>;
+    const versions = await this.listAllVersions(awsName);
+    if (versions === null) return null;
 
     const nonCurrent = versions.filter(
       (v) => !(v.VersionStages ?? []).includes("AWSCURRENT"),
@@ -567,14 +596,71 @@ export class AwsBackend implements VaultBackend {
     return target?.VersionId ?? null;
   }
 
-  async rollback(name: string, targetVersion: number): Promise<boolean> {
-    const value = await this.getHistoryVersion(name, targetVersion);
-    if (value === null) return false;
+  /**
+   * Page through every version of an AWS secret. Returns null if the secret
+   * doesn't exist; otherwise the full, unsorted list.
+   */
+  private async listAllVersions(
+    awsName: string,
+  ): Promise<Array<{
+    VersionId?: string;
+    CreatedDate?: Date;
+    VersionStages?: string[];
+  }> | null> {
+    const { sdk, client } = await this.getClient();
+    const all: Array<{
+      VersionId?: string;
+      CreatedDate?: Date;
+      VersionStages?: string[];
+    }> = [];
+    let nextToken: string | undefined;
+    do {
+      let resp: any;
+      try {
+        resp = await client.send(
+          new sdk.ListSecretVersionIdsCommand({
+            SecretId: awsName,
+            IncludeDeprecated: true,
+            NextToken: nextToken,
+          }),
+        );
+      } catch (err: any) {
+        if (err?.name === "ResourceNotFoundException") return null;
+        throw err;
+      }
+      for (const v of resp.Versions ?? []) all.push(v);
+      nextToken = resp.NextToken;
+    } while (nextToken);
+    return all;
+  }
 
-    // Preserve current tags on rollback (matches SqliteBackend behavior
-    // where rollback only restores the value; tags travel with the row).
-    const currentTags = await this.getTags(name);
-    await this.setSecret(name, value, currentTags);
+  async rollback(name: string, targetVersion: number): Promise<boolean> {
+    const { sdk, client } = await this.getClient();
+    const awsName = this.toAwsName(name);
+
+    // Resolve the target version and fetch its full envelope (not just the
+    // value) so we can restore the tags that were in effect at archival time.
+    // This matches SqliteBackend.rollback(), which restores historyRow.tags.
+    const versionId = await this.resolveVersionId(awsName, targetVersion);
+    if (!versionId) return false;
+
+    let envelope: SecretEnvelope;
+    try {
+      const resp: any = await client.send(
+        new sdk.GetSecretValueCommand({
+          SecretId: awsName,
+          VersionId: versionId,
+        }),
+      );
+      if (!resp.SecretString) return false;
+      envelope = this.decodeEnvelope(resp.SecretString);
+    } catch (err: any) {
+      if (err?.name === "ResourceNotFoundException") return false;
+      throw err;
+    }
+
+    // Restore both value and tags from the historical version.
+    await this.setSecret(name, envelope.value, envelope.tags);
     return true;
   }
 

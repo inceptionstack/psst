@@ -41,17 +41,18 @@ const CONFIG_FILE_NAME = "config.json";
 
 // Re-export the backend record types under their historic names so
 // existing callers (the CLI commands, SDK consumers) don't need to change.
-export type Secret = SecretHistoryRecord extends never
-  ? never
-  : {
-      name: string;
-      value: string;
-      tags: string[];
-      created_at: string;
-      updated_at: string;
-    };
-export type SecretMeta = SecretMetaRecord;
-export type SecretHistoryEntry = SecretHistoryRecord;
+//
+// Interfaces (not type aliases) preserve declaration merging for SDK users
+// who augment these types.
+export interface Secret {
+  name: string;
+  value: string;
+  tags: string[];
+  created_at: string;
+  updated_at: string;
+}
+export interface SecretMeta extends SecretMetaRecord {}
+export interface SecretHistoryEntry extends SecretHistoryRecord {}
 
 export interface VaultOptions {
   /** Encryption key (base64 or password string). Only meaningful for the sqlite backend. */

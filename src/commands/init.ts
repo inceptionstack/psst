@@ -8,15 +8,20 @@ import type { AwsBackendConfig, BackendType } from "../vault/config.js";
 
 /**
  * Parse `--backend <name>` from the CLI args. Accepts "sqlite" (default)
- * or "aws". Returns undefined if absent.
+ * or "aws". Returns undefined if absent. Throws on unknown value so the
+ * user doesn't silently get a sqlite vault when they asked for "gcp".
  */
 function parseBackendFlag(args: string[]): BackendType | undefined {
   const idx = args.indexOf("--backend");
   if (idx === -1) return undefined;
   const value = args[idx + 1];
-  if (!value || value.startsWith("-")) return undefined;
+  if (!value || value.startsWith("-")) {
+    throw new Error("--backend requires a value (sqlite or aws)");
+  }
   if (value === "sqlite" || value === "aws") return value;
-  return undefined;
+  throw new Error(
+    `Unknown --backend "${value}". Supported: sqlite, aws.`,
+  );
 }
 
 function parseStringFlag(args: string[], flag: string): string | undefined {
@@ -49,8 +54,21 @@ export async function init(
   const env = options.env || "default";
   const vaultPath = Vault.getVaultPath(isGlobal, env);
 
-  // Backend selection — default sqlite, opt into aws with --backend aws
-  const backend: BackendType = parseBackendFlag(args) ?? "sqlite";
+  // Backend selection — default sqlite, opt into aws with --backend aws.
+  // parseBackendFlag throws on an unknown value; surface that cleanly.
+  let backend: BackendType;
+  try {
+    backend = parseBackendFlag(args) ?? "sqlite";
+  } catch (err: any) {
+    if (options.json) {
+      console.log(
+        JSON.stringify({ success: false, error: "invalid_backend", message: err.message }),
+      );
+    } else if (!options.quiet) {
+      console.error(chalk.red("✗"), err.message);
+    }
+    process.exit(EXIT_USER_ERROR);
+  }
 
   let awsConfig: AwsBackendConfig | undefined;
   if (backend === "aws") {
@@ -136,6 +154,7 @@ export async function init(
       const envFlag = env !== "default" ? ` --env ${env}` : "";
       console.log(chalk.cyan(`  psst${globalFlag}${envFlag} set STRIPE_KEY`));
       console.log(chalk.cyan(`  psst${globalFlag}${envFlag} set DATABASE_URL`));
+      console.log(chalk.cyan("  psst onboard"));
       console.log();
     }
   } else {

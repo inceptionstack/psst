@@ -23,23 +23,18 @@ export async function tag(
 
   const vault = await getUnlockedVault(options);
 
-  // Check if secret exists
-  const existing = await vault.getTags(name);
-  if (existing.length === 0) {
-    // Could be no tags or secret doesn't exist - check by listing
-    const secrets = await vault.listSecrets();
-    const exists = secrets.some((s) => s.name === name);
-    if (!exists) {
-      vault.close();
-      if (options.json) {
-        console.log(
-          JSON.stringify({ success: false, error: "not_found", name }),
-        );
-      } else if (!options.quiet) {
-        console.error(chalk.red("✗"), `Secret "${name}" not found`);
-      }
-      process.exit(EXIT_USER_ERROR);
+  // Check if secret exists. getSecret returns null only when the secret
+  // is truly absent — cheaper than listSecrets, especially on remote
+  // backends like AWS where listSecrets paginates the whole account.
+  const probe = await vault.getSecret(name);
+  if (probe === null) {
+    vault.close();
+    if (options.json) {
+      console.log(JSON.stringify({ success: false, error: "not_found", name }));
+    } else if (!options.quiet) {
+      console.error(chalk.red("✗"), `Secret "${name}" not found`);
     }
+    process.exit(EXIT_USER_ERROR);
   }
 
   const success = await vault.addTags(name, tagsToAdd);
@@ -79,10 +74,10 @@ export async function untag(
 
   const vault = await getUnlockedVault(options);
 
-  // Check if secret exists
-  const secrets = await vault.listSecrets();
-  const exists = secrets.some((s) => s.name === name);
-  if (!exists) {
+  // Existence check — see tag() for rationale on using getSecret instead
+  // of listSecrets.
+  const probe = await vault.getSecret(name);
+  if (probe === null) {
     vault.close();
     if (options.json) {
       console.log(JSON.stringify({ success: false, error: "not_found", name }));
