@@ -170,10 +170,60 @@ export class AwsBackend implements VaultBackend {
           SecretString: envelope,
         }),
       );
-      // Sync user tags separately (PutSecretValue doesn't touch tags)
+      // Keep resource tags in sync with the envelope we just wrote. This
+      // matches the sqlite backend's semantics: setSecret(name, value) with
+      // no tags argument clears tags; setSecret(name, value, tags) replaces
+      // the tag set. Use psst tag / psst untag to mutate tags without
+      // replacing the value.
       await this.syncResourceTags(awsName, userTags);
     } catch (err: any) {
       if (err?.name === "ResourceNotFoundException") {
+        await this.createSecretWithRetry(awsName, envelope, userTags);
+        return;
+      }
+      if (err?.name === "InvalidRequestException") {
+        // The secret exists but is scheduled for deletion (can happen after
+        // ForceDeleteWithoutRecovery during the ~15s reuse window, or after
+        // a soft-delete with recovery). Try to restore, then retry once.
+        const restored = await this.tryRestoreSecret(awsName);
+        if (restored) {
+          await client.send(
+            new sdk.PutSecretValueCommand({
+              SecretId: awsName,
+              SecretString: envelope,
+            }),
+          );
+          await this.syncResourceTags(awsName, userTags);
+          return;
+        }
+        throw new Error(
+          `AWS secret "${awsName}" is scheduled for deletion and cannot be updated. ` +
+            `Wait ~15s after 'psst rm' before re-creating, or use 'aws secretsmanager restore-secret'.`,
+        );
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * CreateSecret retry loop — handles the race where a previous
+   * ForceDeleteWithoutRecovery is still propagating (AWS returns
+   * InvalidRequestException for ~15s).
+   */
+  private async createSecretWithRetry(
+    awsName: string,
+    envelope: string,
+    userTags: string[],
+  ): Promise<void> {
+    const { sdk, client } = await this.getClient();
+    const maxAttempts = 4;
+    const backoffMs = [0, 2000, 5000, 10000];
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      if (backoffMs[attempt] > 0) {
+        await new Promise((r) => setTimeout(r, backoffMs[attempt]));
+      }
+      try {
         await client.send(
           new sdk.CreateSecretCommand({
             Name: awsName,
@@ -182,8 +232,46 @@ export class AwsBackend implements VaultBackend {
           }),
         );
         return;
+      } catch (err: any) {
+        // Scheduled-for-deletion reuse window — retry after backoff
+        const msg = String(err?.message ?? "");
+        const isSchedulingRace =
+          err?.name === "InvalidRequestException" &&
+          /scheduled for deletion/i.test(msg);
+        if (isSchedulingRace && attempt < maxAttempts - 1) continue;
+
+        // If we hit scheduled-for-deletion, attempt to restore instead of
+        // creating — the secret still exists in AWS, it just needs a
+        // cancel-delete.
+        if (isSchedulingRace) {
+          const restored = await this.tryRestoreSecret(awsName);
+          if (restored) {
+            await client.send(
+              new sdk.PutSecretValueCommand({
+                SecretId: awsName,
+                SecretString: envelope,
+              }),
+            );
+            await this.syncResourceTags(awsName, userTags);
+            return;
+          }
+          throw new Error(
+            `AWS secret "${awsName}" is scheduled for deletion. ` +
+              `Retry in a few seconds or restore it via AWS console/CLI.`,
+          );
+        }
+        throw err;
       }
-      throw err;
+    }
+  }
+
+  private async tryRestoreSecret(awsName: string): Promise<boolean> {
+    const { sdk, client } = await this.getClient();
+    try {
+      await client.send(new sdk.RestoreSecretCommand({ SecretId: awsName }));
+      return true;
+    } catch {
+      return false;
     }
   }
 
@@ -239,10 +327,12 @@ export class AwsBackend implements VaultBackend {
         const logicalName = this.fromAwsName(entry.Name);
         if (logicalName === null) continue;
 
-        // Prefer tags from the JSON payload (authoritative, avoids one
-        // extra API call per secret). Fall back to resource tags if the
-        // payload wasn't written by psst.
-        let tags: string[] = this.extractTagsFromResourceTags(entry.Tags);
+        // Tags come from AWS resource tags (ListSecrets includes them in
+        // each entry's Tags field). The JSON envelope also carries tags
+        // but ListSecrets doesn't return SecretString, and doing a
+        // GetSecretValue per listed secret would be an N+1. Resource tags
+        // are treated as the authoritative source for listing/filtering.
+        const tags: string[] = this.extractTagsFromResourceTags(entry.Tags);
 
         secrets.push({
           name: logicalName,
@@ -305,28 +395,13 @@ export class AwsBackend implements VaultBackend {
       throw err;
     }
 
+    // Resource tags are the authoritative source of truth for listing and
+    // filtering. We intentionally do NOT rewrite the SecretString envelope
+    // here — PutSecretValue always creates a new AWS version, which would
+    // produce spurious 'psst history' entries for pure tag changes. The
+    // payload's embedded tags become stale, but no code path reads them
+    // back (listSecrets and getTags both use resource tags).
     await this.syncResourceTags(awsName, tags);
-
-    // Also update the JSON envelope so the tags on the payload match.
-    // We read current value, rewrite envelope with new tags.
-    try {
-      const current = await client.send(
-        new sdk.GetSecretValueCommand({ SecretId: awsName }),
-      );
-      const existing =
-        current.SecretString !== undefined
-          ? this.decodeEnvelope(current.SecretString)
-          : { value: "", tags: [] };
-      await client.send(
-        new sdk.PutSecretValueCommand({
-          SecretId: awsName,
-          SecretString: this.encodeEnvelope(existing.value, tags),
-        }),
-      );
-    } catch {
-      // Payload rewrite is best-effort; resource tags are the source of truth
-      // for list/filter queries.
-    }
 
     return true;
   }
@@ -511,6 +586,14 @@ export class AwsBackend implements VaultBackend {
     // Callers should treat clearHistory() as advisory across backends.
   }
 
+  /**
+   * Remove a secret from AWS Secrets Manager.
+   *
+   * We use ForceDeleteWithoutRecovery=true to match 'psst rm' semantics
+   * (immediate deletion, no soft-delete window). AWS enforces a ~15s
+   * window during which the same name cannot be reused; setSecret()
+   * handles that by retrying (or restoring if scheduled).
+   */
   async removeSecret(name: string): Promise<boolean> {
     const { sdk, client } = await this.getClient();
     const awsName = this.toAwsName(name);
