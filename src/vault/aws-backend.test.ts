@@ -46,34 +46,57 @@ class FakeStore {
 
   assertExists(name: string): FakeSecret {
     const s = this.secrets.get(name);
-    if (!s) throw new FakeAwsError("ResourceNotFoundException", `no secret: ${name}`);
-    if (s.pendingDelete) throw new FakeAwsError("InvalidRequestException", "scheduled for deletion");
+    if (!s)
+      throw new FakeAwsError("ResourceNotFoundException", `no secret: ${name}`);
+    if (s.pendingDelete)
+      throw new FakeAwsError(
+        "InvalidRequestException",
+        "scheduled for deletion",
+      );
     return s;
   }
 }
 
 const store = new FakeStore();
 
+/**
+ * Input payload passed to any AWS SDK command. The real SDK has ~15 command
+ * classes with wildly different input shapes, so we type this loosely in the
+ * fake and narrow per-case inside FakeClient.send().
+ */
+type FakeCommandInput = Record<string, unknown>;
+
 function makeCommand(name: string) {
   return class {
     readonly __cmd = name;
-    input: any;
-    constructor(input: any) {
+    input: FakeCommandInput;
+    constructor(input: FakeCommandInput) {
       this.input = input;
     }
   };
 }
 
+type FakeCommand = { __cmd: string; input: FakeCommandInput };
+
 class FakeClient {
-  async send(cmd: any): Promise<any> {
-    const name = cmd.__cmd as string;
+  // The return type mirrors the AWS SDK — each command has its own output
+  // shape. We use `unknown` on the public signature and let TypeScript flow
+  // analysis narrow via the switch.
+  async send(cmd: FakeCommand): Promise<unknown> {
+    const name = cmd.__cmd;
+    // Per-command input casts are safe because makeCommand() sets __cmd to
+    // match the command class the caller instantiated.
+    // biome-ignore lint/suspicious/noExplicitAny: deliberate fake-mock
     const i = cmd.input as any;
     switch (name) {
       case "CreateSecret": {
         if (store.secrets.has(i.Name)) {
           const existing = store.secrets.get(i.Name)!;
           if (existing.pendingDelete) {
-            throw new FakeAwsError("InvalidRequestException", "scheduled for deletion");
+            throw new FakeAwsError(
+              "InvalidRequestException",
+              "scheduled for deletion",
+            );
           }
           throw new FakeAwsError("ResourceExistsException", "already exists");
         }
@@ -108,20 +131,41 @@ class FakeClient {
         const s = store.assertExists(i.SecretId);
         if (i.VersionId) {
           const v = s.Versions.find((x) => x.VersionId === i.VersionId);
-          if (!v) throw new FakeAwsError("ResourceNotFoundException", "no version");
-          return { Name: s.Name, SecretString: v.SecretString, VersionId: v.VersionId };
+          if (!v)
+            throw new FakeAwsError("ResourceNotFoundException", "no version");
+          return {
+            Name: s.Name,
+            SecretString: v.SecretString,
+            VersionId: v.VersionId,
+          };
         }
-        const current = s.Versions.find((v) => v.VersionStages.includes("AWSCURRENT"));
-        if (!current) throw new FakeAwsError("ResourceNotFoundException", "no current version");
-        return { Name: s.Name, SecretString: current.SecretString, VersionId: current.VersionId };
+        const current = s.Versions.find((v) =>
+          v.VersionStages.includes("AWSCURRENT"),
+        );
+        if (!current)
+          throw new FakeAwsError(
+            "ResourceNotFoundException",
+            "no current version",
+          );
+        return {
+          Name: s.Name,
+          SecretString: current.SecretString,
+          VersionId: current.VersionId,
+        };
       }
       case "BatchGetSecretValue": {
         const ids: string[] = i.SecretIdList;
-        const results: any[] = [];
+        const results: Array<{
+          Name: string;
+          SecretString: string;
+          VersionId: string;
+        }> = [];
         for (const id of ids) {
           const s = store.secrets.get(id);
           if (!s || s.pendingDelete) continue;
-          const current = s.Versions.find((v) => v.VersionStages.includes("AWSCURRENT"));
+          const current = s.Versions.find((v) =>
+            v.VersionStages.includes("AWSCURRENT"),
+          );
           if (current) {
             results.push({
               Name: s.Name,
@@ -139,7 +183,8 @@ class FakeClient {
       case "ListSecrets": {
         const all = [...store.secrets.values()].filter((s) => !s.pendingDelete);
         // Apply the Filters[] array (tag-key + name prefix) like AWS does.
-        const filters: Array<{ Key: string; Values: string[] }> = i.Filters ?? [];
+        const filters: Array<{ Key: string; Values: string[] }> =
+          i.Filters ?? [];
         const filtered = all.filter((s) => {
           for (const f of filters) {
             if (f.Key === "tag-key") {
@@ -187,7 +232,8 @@ class FakeClient {
       }
       case "DeleteSecret": {
         const s = store.secrets.get(i.SecretId);
-        if (!s) throw new FakeAwsError("ResourceNotFoundException", "not found");
+        if (!s)
+          throw new FakeAwsError("ResourceNotFoundException", "not found");
         if (i.ForceDeleteWithoutRecovery) {
           store.secrets.delete(i.SecretId);
         } else {
@@ -197,7 +243,8 @@ class FakeClient {
       }
       case "RestoreSecret": {
         const s = store.secrets.get(i.SecretId);
-        if (!s) throw new FakeAwsError("ResourceNotFoundException", "not found");
+        if (!s)
+          throw new FakeAwsError("ResourceNotFoundException", "not found");
         s.pendingDelete = false;
         return {};
       }
@@ -357,7 +404,9 @@ describe("AwsBackend", () => {
       const b = new AwsBackend({ region: "us-east-1" });
       await b.setSecret("A", "v", ["aws"]);
       // Add an external tag directly to the fake store
-      store.secrets.get("psst/A")!.Tags.push({ Key: "Environment", Value: "prod" });
+      store.secrets
+        .get("psst/A")!
+        .Tags.push({ Key: "Environment", Value: "prod" });
       const list = await b.listSecrets();
       expect(list[0].tags).toEqual(["aws"]);
     });
@@ -493,9 +542,7 @@ describe("AwsBackend", () => {
       // Pre-insert a raw secret (as if created outside psst)
       store.secrets.set("psst/LEGACY", {
         Name: "psst/LEGACY",
-        Tags: [
-          { Key: "psst:managed", Value: "true" },
-        ],
+        Tags: [{ Key: "psst:managed", Value: "true" }],
         Versions: [
           {
             VersionId: "vid-legacy",

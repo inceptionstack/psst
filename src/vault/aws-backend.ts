@@ -39,6 +39,18 @@
  *     (IAM role on EC2, AWS_PROFILE, ~/.aws/credentials, etc).
  */
 
+// We dynamically import the AWS SDK so users without AWS configured never
+// pay the cold-start cost and so Bun's `--compile` doesn't drag it in.
+// Type-only imports are erased by tsc at build time, so they're safe even
+// when @aws-sdk/client-secrets-manager isn't installed.
+import type {
+  BatchGetSecretValueCommandOutput,
+  DescribeSecretCommandOutput,
+  GetSecretValueCommandOutput,
+  ListSecretsCommandOutput,
+  ListSecretVersionIdsCommandOutput,
+} from "@aws-sdk/client-secrets-manager";
+import { errorMessage, isAwsErrorNamed } from "../utils/errors.js";
 import type {
   SecretHistoryRecord,
   SecretMetaRecord,
@@ -47,8 +59,6 @@ import type {
 import type { AwsBackendConfig } from "./config.js";
 import { resolveAwsPrefix, resolveAwsRegion } from "./config.js";
 
-// We dynamically import the AWS SDK so users without AWS configured never
-// pay the cold-start cost and so Bun's `--compile` doesn't drag it in.
 type AwsSdk = typeof import("@aws-sdk/client-secrets-manager");
 type SecretsManagerClient = InstanceType<AwsSdk["SecretsManagerClient"]>;
 
@@ -80,15 +90,18 @@ export class AwsBackend implements VaultBackend {
    * Lazily construct the AWS SDK client. Throws a clear error if the
    * SDK isn't installed (it's a peer dependency, not bundled).
    */
-  private async getClient(): Promise<{ sdk: AwsSdk; client: SecretsManagerClient }> {
+  private async getClient(): Promise<{
+    sdk: AwsSdk;
+    client: SecretsManagerClient;
+  }> {
     if (this.client && this.sdk) return { sdk: this.sdk, client: this.client };
 
     try {
       this.sdk = (await import("@aws-sdk/client-secrets-manager")) as AwsSdk;
-    } catch (err: any) {
+    } catch (err) {
       throw new Error(
         `AWS backend requires @aws-sdk/client-secrets-manager. ` +
-          `Install it: npm install @aws-sdk/client-secrets-manager. (${err.message})`,
+          `Install it: npm install @aws-sdk/client-secrets-manager. (${errorMessage(err)})`,
       );
     }
 
@@ -99,13 +112,13 @@ export class AwsBackend implements VaultBackend {
       // Load profile credentials via @aws-sdk/credential-providers. If the
       // package isn't installed we fail loudly rather than mutate process.env
       // (which would leak into subprocesses spawned by psst run/exec).
-      let credsMod: any;
+      let credsMod: typeof import("@aws-sdk/credential-providers");
       try {
         credsMod = await import("@aws-sdk/credential-providers");
-      } catch (err: any) {
+      } catch (err) {
         throw new Error(
           `AWS --aws-profile requires @aws-sdk/credential-providers. ` +
-            `Install it: npm install @aws-sdk/credential-providers. (${err.message})`,
+            `Install it: npm install @aws-sdk/credential-providers. (${errorMessage(err)})`,
         );
       }
       clientConfig.credentials = credsMod.fromNodeProviderChain({
@@ -139,7 +152,9 @@ export class AwsBackend implements VaultBackend {
         return {
           value: parsed.value,
           tags: Array.isArray(parsed.tags)
-            ? parsed.tags.filter((t: unknown): t is string => typeof t === "string")
+            ? parsed.tags.filter(
+                (t: unknown): t is string => typeof t === "string",
+              )
             : [],
         };
       }
@@ -150,12 +165,17 @@ export class AwsBackend implements VaultBackend {
     return { value: payload, tags: [] };
   }
 
-  private buildResourceTags(userTags: string[]): Array<{ Key: string; Value: string }> {
+  private buildResourceTags(
+    userTags: string[],
+  ): Array<{ Key: string; Value: string }> {
     const tags: Array<{ Key: string; Value: string }> = [
       { Key: MANAGED_TAG_KEY, Value: MANAGED_TAG_VALUE },
     ];
     for (const t of userTags) {
-      tags.push({ Key: `${USER_TAG_KEY_PREFIX}${t}`, Value: MANAGED_TAG_VALUE });
+      tags.push({
+        Key: `${USER_TAG_KEY_PREFIX}${t}`,
+        Value: MANAGED_TAG_VALUE,
+      });
     }
     return tags;
   }
@@ -166,8 +186,8 @@ export class AwsBackend implements VaultBackend {
     try {
       await client.send(new sdk.DescribeSecretCommand({ SecretId: awsName }));
       return true;
-    } catch (err: any) {
-      if (err?.name === "ResourceNotFoundException") return false;
+    } catch (err) {
+      if (isAwsErrorNamed(err, "ResourceNotFoundException")) return false;
       throw err;
     }
   }
@@ -192,12 +212,12 @@ export class AwsBackend implements VaultBackend {
       // the tag set. Use psst tag / psst untag to mutate tags without
       // replacing the value.
       await this.syncResourceTags(awsName, userTags);
-    } catch (err: any) {
-      if (err?.name === "ResourceNotFoundException") {
+    } catch (err) {
+      if (isAwsErrorNamed(err, "ResourceNotFoundException")) {
         await this.createSecretWithRetry(awsName, envelope, userTags);
         return;
       }
-      if (err?.name === "InvalidRequestException") {
+      if (isAwsErrorNamed(err, "InvalidRequestException")) {
         // The secret exists but is scheduled for deletion (can happen after
         // ForceDeleteWithoutRecovery during the ~15s reuse window, or after
         // a soft-delete with recovery). Try to restore, then retry once.
@@ -248,11 +268,11 @@ export class AwsBackend implements VaultBackend {
           }),
         );
         return;
-      } catch (err: any) {
+      } catch (err) {
         // Scheduled-for-deletion reuse window — retry after backoff
-        const msg = String(err?.message ?? "");
+        const msg = String(errorMessage(err) ?? "");
         const isSchedulingRace =
-          err?.name === "InvalidRequestException" &&
+          isAwsErrorNamed(err, "InvalidRequestException") &&
           /scheduled for deletion/i.test(msg);
         if (isSchedulingRace && attempt < maxAttempts - 1) continue;
 
@@ -301,8 +321,8 @@ export class AwsBackend implements VaultBackend {
       );
       if (!result.SecretString) return null;
       return this.decodeEnvelope(result.SecretString).value;
-    } catch (err: any) {
-      if (err?.name === "ResourceNotFoundException") return null;
+    } catch (err) {
+      if (isAwsErrorNamed(err, "ResourceNotFoundException")) return null;
       throw err;
     }
   }
@@ -320,7 +340,7 @@ export class AwsBackend implements VaultBackend {
     for (let i = 0; i < awsNames.length; i += CHUNK) {
       const chunk = awsNames.slice(i, i + CHUNK);
       try {
-        const resp: any = await client.send(
+        const resp: BatchGetSecretValueCommandOutput = await client.send(
           new sdk.BatchGetSecretValueCommand({ SecretIdList: chunk }),
         );
         for (const entry of resp.SecretValues ?? []) {
@@ -332,10 +352,13 @@ export class AwsBackend implements VaultBackend {
         // resp.Errors lists per-name errors (e.g., ResourceNotFoundException).
         // We silently drop those — callers (run/exec) handle missing secrets
         // via env-var fallback or explicit error messages.
-      } catch (err: any) {
+      } catch (err) {
         // BatchGetSecretValue may not be available in every region/SDK
         // version. Fall back to per-name GetSecretValue for this chunk.
-        if (err?.name === "UnknownCommandException" || err?.name === "ValidationException") {
+        if (
+          isAwsErrorNamed(err, "UnknownCommandException") ||
+          isAwsErrorNamed(err, "ValidationException")
+        ) {
           for (const logical of names.slice(i, i + CHUNK)) {
             const v = await this.getSecret(logical);
             if (v !== null) result.set(logical, v);
@@ -355,14 +378,14 @@ export class AwsBackend implements VaultBackend {
     let nextToken: string | undefined;
 
     do {
-      const resp: any = await client.send(
+      const resp: ListSecretsCommandOutput = await client.send(
         new sdk.ListSecretsCommand({
           Filters: [
             { Key: "tag-key", Values: [MANAGED_TAG_KEY] },
             // We still filter by name prefix so we don't load every
             // psst:managed=true secret in the account (supports multi-tenant).
             ...(this.prefix
-              ? [{ Key: "name", Values: [this.prefix] } as any]
+              ? [{ Key: "name" as const, Values: [this.prefix] }]
               : []),
           ],
           NextToken: nextToken,
@@ -387,7 +410,9 @@ export class AwsBackend implements VaultBackend {
           tags,
           created_at: this.toIsoString(entry.CreatedDate),
           updated_at: this.toIsoString(
-            entry.LastChangedDate ?? entry.LastAccessedDate ?? entry.CreatedDate,
+            entry.LastChangedDate ??
+              entry.LastAccessedDate ??
+              entry.CreatedDate,
           ),
         });
       }
@@ -411,7 +436,7 @@ export class AwsBackend implements VaultBackend {
     if (!resourceTags) return [];
     const out: string[] = [];
     for (const t of resourceTags) {
-      if (t.Key && t.Key.startsWith(USER_TAG_KEY_PREFIX)) {
+      if (t.Key?.startsWith(USER_TAG_KEY_PREFIX)) {
         out.push(t.Key.slice(USER_TAG_KEY_PREFIX.length));
       }
     }
@@ -422,12 +447,12 @@ export class AwsBackend implements VaultBackend {
     const { sdk, client } = await this.getClient();
     const awsName = this.toAwsName(name);
     try {
-      const resp: any = await client.send(
+      const resp: DescribeSecretCommandOutput = await client.send(
         new sdk.DescribeSecretCommand({ SecretId: awsName }),
       );
       return this.extractTagsFromResourceTags(resp.Tags);
-    } catch (err: any) {
-      if (err?.name === "ResourceNotFoundException") return [];
+    } catch (err) {
+      if (isAwsErrorNamed(err, "ResourceNotFoundException")) return [];
       throw err;
     }
   }
@@ -442,12 +467,12 @@ export class AwsBackend implements VaultBackend {
   ): Promise<{ current: string[] } | null> {
     const { sdk, client } = await this.getClient();
     try {
-      const resp: any = await client.send(
+      const resp: DescribeSecretCommandOutput = await client.send(
         new sdk.DescribeSecretCommand({ SecretId: awsName }),
       );
       return { current: this.extractTagsFromResourceTags(resp.Tags) };
-    } catch (err: any) {
-      if (err?.name === "ResourceNotFoundException") return null;
+    } catch (err) {
+      if (isAwsErrorNamed(err, "ResourceNotFoundException")) return null;
       throw err;
     }
   }
@@ -522,9 +547,12 @@ export class AwsBackend implements VaultBackend {
    * with the tags baked into the envelope we just wrote. Does one
    * DescribeSecret to read the current tag set, then diffs.
    */
-  private async syncResourceTags(awsName: string, userTags: string[]): Promise<void> {
+  private async syncResourceTags(
+    awsName: string,
+    userTags: string[],
+  ): Promise<void> {
     const { sdk, client } = await this.getClient();
-    const desc: any = await client.send(
+    const desc: DescribeSecretCommandOutput = await client.send(
       new sdk.DescribeSecretCommand({ SecretId: awsName }),
     );
     const currentTags = this.extractTagsFromResourceTags(desc.Tags);
@@ -561,7 +589,7 @@ export class AwsBackend implements VaultBackend {
       nonCurrent.map(async (v) => {
         if (!v.VersionId) return { tags: [] as string[] };
         try {
-          const resp: any = await client.send(
+          const resp: GetSecretValueCommandOutput = await client.send(
             new sdk.GetSecretValueCommand({
               SecretId: awsName,
               VersionId: v.VersionId,
@@ -586,7 +614,10 @@ export class AwsBackend implements VaultBackend {
     return numbered.reverse();
   }
 
-  async getHistoryVersion(name: string, version: number): Promise<string | null> {
+  async getHistoryVersion(
+    name: string,
+    version: number,
+  ): Promise<string | null> {
     const { sdk, client } = await this.getClient();
     const awsName = this.toAwsName(name);
 
@@ -594,7 +625,7 @@ export class AwsBackend implements VaultBackend {
     if (!versionId) return null;
 
     try {
-      const resp: any = await client.send(
+      const resp: GetSecretValueCommandOutput = await client.send(
         new sdk.GetSecretValueCommand({
           SecretId: awsName,
           VersionId: versionId,
@@ -602,8 +633,8 @@ export class AwsBackend implements VaultBackend {
       );
       if (!resp.SecretString) return null;
       return this.decodeEnvelope(resp.SecretString).value;
-    } catch (err: any) {
-      if (err?.name === "ResourceNotFoundException") return null;
+    } catch (err) {
+      if (isAwsErrorNamed(err, "ResourceNotFoundException")) return null;
       throw err;
     }
   }
@@ -632,9 +663,7 @@ export class AwsBackend implements VaultBackend {
    * Page through every version of an AWS secret. Returns null if the secret
    * doesn't exist; otherwise the full, unsorted list.
    */
-  private async listAllVersions(
-    awsName: string,
-  ): Promise<Array<{
+  private async listAllVersions(awsName: string): Promise<Array<{
     VersionId?: string;
     CreatedDate?: Date;
     VersionStages?: string[];
@@ -647,7 +676,7 @@ export class AwsBackend implements VaultBackend {
     }> = [];
     let nextToken: string | undefined;
     do {
-      let resp: any;
+      let resp: ListSecretVersionIdsCommandOutput;
       try {
         resp = await client.send(
           new sdk.ListSecretVersionIdsCommand({
@@ -656,8 +685,8 @@ export class AwsBackend implements VaultBackend {
             NextToken: nextToken,
           }),
         );
-      } catch (err: any) {
-        if (err?.name === "ResourceNotFoundException") return null;
+      } catch (err) {
+        if (isAwsErrorNamed(err, "ResourceNotFoundException")) return null;
         throw err;
       }
       for (const v of resp.Versions ?? []) all.push(v);
@@ -678,7 +707,7 @@ export class AwsBackend implements VaultBackend {
 
     let envelope: SecretEnvelope;
     try {
-      const resp: any = await client.send(
+      const resp: GetSecretValueCommandOutput = await client.send(
         new sdk.GetSecretValueCommand({
           SecretId: awsName,
           VersionId: versionId,
@@ -686,8 +715,8 @@ export class AwsBackend implements VaultBackend {
       );
       if (!resp.SecretString) return false;
       envelope = this.decodeEnvelope(resp.SecretString);
-    } catch (err: any) {
-      if (err?.name === "ResourceNotFoundException") return false;
+    } catch (err) {
+      if (isAwsErrorNamed(err, "ResourceNotFoundException")) return false;
       throw err;
     }
 
@@ -724,8 +753,8 @@ export class AwsBackend implements VaultBackend {
         }),
       );
       return true;
-    } catch (err: any) {
-      if (err?.name === "ResourceNotFoundException") return false;
+    } catch (err) {
+      if (isAwsErrorNamed(err, "ResourceNotFoundException")) return false;
       throw err;
     }
   }
@@ -746,9 +775,10 @@ export class AwsBackend implements VaultBackend {
  * Initialize an AWS-backed vault. We only need to sanity-check that the
  * region can be resolved — actual AWS auth is validated lazily on first call.
  */
-export function initializeAwsVault(
-  config: AwsBackendConfig | undefined,
-): { success: boolean; error?: string } {
+export function initializeAwsVault(config: AwsBackendConfig | undefined): {
+  success: boolean;
+  error?: string;
+} {
   const region = resolveAwsRegion(config);
   if (!region) {
     return {

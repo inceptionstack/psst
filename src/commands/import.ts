@@ -87,10 +87,7 @@ export async function importSecrets(
   }
 
   if (!options.quiet) {
-    console.log(
-      chalk.green("✓"),
-      `Imported ${chalk.bold(imported)} secret(s)`,
-    );
+    console.log(chalk.green("✓"), `Imported ${chalk.bold(imported)} secret(s)`);
     if (skipped > 0) {
       console.log(chalk.dim(`  Skipped ${skipped} invalid entries`));
     }

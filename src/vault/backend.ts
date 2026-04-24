@@ -27,6 +27,13 @@ export interface SecretHistoryRecord {
 }
 
 /**
+ * Logical identifier for a storage backend implementation. Mirrors the
+ * `BackendType` union in config.ts so callers can `switch` on the value
+ * without importing both modules.
+ */
+export type VaultBackendType = "sqlite" | "aws";
+
+/**
  * Pluggable storage backend for secrets.
  *
  * Implementations:
@@ -34,7 +41,7 @@ export interface SecretHistoryRecord {
  *   - AwsBackend     — AWS Secrets Manager
  */
 export interface VaultBackend {
-  readonly type: string;
+  readonly type: VaultBackendType;
 
   /** Return true if a secret with this logical name exists. */
   exists(name: string): Promise<boolean>;
@@ -51,7 +58,11 @@ export interface VaultBackend {
   /** List secret metadata, optionally filtered by tags (OR logic). */
   listSecrets(filterTags?: string[]): Promise<SecretMetaRecord[]>;
 
-  /** Remove a secret and its history. Returns true if it existed. */
+  /**
+   * Remove a secret. Callers should separately invoke `clearHistory(name)`
+   * if they want historical versions wiped — `removeSecret` only removes
+   * the current value. Returns true if the secret existed.
+   */
   removeSecret(name: string): Promise<boolean>;
 
   /** Get tags for a secret. */

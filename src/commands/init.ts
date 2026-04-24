@@ -1,10 +1,11 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import chalk from "chalk";
+import { errorMessage } from "../utils/errors.js";
 import { EXIT_ERROR, EXIT_USER_ERROR } from "../utils/exit-codes.js";
 import type { OutputOptions } from "../utils/output.js";
-import { Vault } from "../vault/vault.js";
 import type { AwsBackendConfig, BackendType } from "../vault/config.js";
+import { Vault } from "../vault/vault.js";
 
 /**
  * Parse `--backend <name>` from the CLI args. Accepts "sqlite" (default)
@@ -19,9 +20,7 @@ function parseBackendFlag(args: string[]): BackendType | undefined {
     throw new Error("--backend requires a value (sqlite or aws)");
   }
   if (value === "sqlite" || value === "aws") return value;
-  throw new Error(
-    `Unknown --backend "${value}". Supported: sqlite, aws.`,
-  );
+  throw new Error(`Unknown --backend "${value}". Supported: sqlite, aws.`);
 }
 
 function parseStringFlag(args: string[], flag: string): string | undefined {
@@ -59,13 +58,18 @@ export async function init(
   let backend: BackendType;
   try {
     backend = parseBackendFlag(args) ?? "sqlite";
-  } catch (err: any) {
+  } catch (err) {
+    const msg = errorMessage(err);
     if (options.json) {
       console.log(
-        JSON.stringify({ success: false, error: "invalid_backend", message: err.message }),
+        JSON.stringify({
+          success: false,
+          error: "invalid_backend",
+          message: msg,
+        }),
       );
     } else if (!options.quiet) {
-      console.error(chalk.red("✗"), err.message);
+      console.error(chalk.red("✗"), msg);
     }
     process.exit(EXIT_USER_ERROR);
     // Unreachable: process.exit's return type is `never`, but TS control

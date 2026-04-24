@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   loadConfig,
   resolveAwsPrefix,
@@ -29,7 +29,10 @@ describe("vault config", () => {
     });
 
     it("parses an explicit sqlite config", () => {
-      writeFileSync(join(dir, "config.json"), JSON.stringify({ backend: "sqlite" }));
+      writeFileSync(
+        join(dir, "config.json"),
+        JSON.stringify({ backend: "sqlite" }),
+      );
       expect(loadConfig(dir)).toEqual({ backend: "sqlite" });
     });
 

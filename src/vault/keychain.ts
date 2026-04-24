@@ -47,7 +47,9 @@ async function spawnWithStdin(cmd: string[], input: string): Promise<number> {
 
   const { spawn } = await import("node:child_process");
   return new Promise((resolve) => {
-    const proc = spawn(cmd[0], cmd.slice(1), { stdio: ["pipe", "ignore", "ignore"] });
+    const proc = spawn(cmd[0], cmd.slice(1), {
+      stdio: ["pipe", "ignore", "ignore"],
+    });
     proc.stdin!.write(input);
     proc.stdin!.end();
     proc.on("close", (code) => resolve(code ?? 1));

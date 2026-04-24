@@ -20,6 +20,7 @@
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { AwsBackend, initializeAwsVault } from "./aws-backend.js";
 import type {
   SecretHistoryRecord,
   SecretMetaRecord,
@@ -28,12 +29,11 @@ import type {
 import {
   type AwsBackendConfig,
   type BackendType,
-  type VaultConfig,
   loadConfig,
   saveConfig,
+  type VaultConfig,
 } from "./config.js";
-import { AwsBackend, initializeAwsVault } from "./aws-backend.js";
-import { SqliteBackend, initializeSqliteVault } from "./sqlite-backend.js";
+import { initializeSqliteVault, SqliteBackend } from "./sqlite-backend.js";
 
 const VAULT_DIR_NAME = ".psst";
 const DB_NAME = "vault.db";
@@ -42,8 +42,9 @@ const CONFIG_FILE_NAME = "config.json";
 // Re-export the backend record types under their historic names so
 // existing callers (the CLI commands, SDK consumers) don't need to change.
 //
-// Interfaces (not type aliases) preserve declaration merging for SDK users
-// who augment these types.
+// These are declared as `interface extends ...` (rather than `type =`) so
+// downstream TypeScript consumers can augment them via declaration merging.
+
 export interface Secret {
   name: string;
   value: string;
@@ -137,12 +138,6 @@ export class Vault {
     return this.backend.getSecrets(names);
   }
 
-  // Historically synchronous — callers expect a sync signature.
-  // The sqlite backend is truly sync internally; for the aws backend we
-  // surface an async variant, but to stay API-compatible we deopt to a
-  // sync façade that returns a Promise-like only when needed.
-  //
-  // Simpler option: make listSecrets async in both. The CLI already awaits.
   listSecrets(filterTags?: string[]): Promise<SecretMetaRecord[]> {
     return this.backend.listSecrets(filterTags);
   }
@@ -237,6 +232,12 @@ export class Vault {
    *
    * A vault is considered present if either a `vault.db` (sqlite) or a
    * `config.json` (any backend, e.g. aws with no local db) exists.
+   *
+   * Asymmetry: legacy sqlite vaults were never written with a config.json,
+   * so we accept `vault.db` alone as proof-of-vault. AWS vaults have no
+   * local DB file so `config.json` is the only marker. This preserves
+   * zero-config for new sqlite users and backwards compat for existing
+   * vaults created before backends were pluggable.
    */
   static findVaultPath(
     options: { global?: boolean; env?: string } = {},

@@ -7,15 +7,20 @@
  * encryption key / unlock lifecycle.
  */
 
-import { type SqliteDatabase, openDatabase } from "./database.js";
 import { join } from "node:path";
-import { decrypt, encrypt, keyToBuffer } from "./crypto.js";
-import { generateKey, getKey, isKeychainAvailable, storeKey } from "./keychain.js";
 import type {
   SecretHistoryRecord,
   SecretMetaRecord,
   VaultBackend,
 } from "./backend.js";
+import { decrypt, encrypt, keyToBuffer } from "./crypto.js";
+import { openDatabase, type SqliteDatabase } from "./database.js";
+import {
+  generateKey,
+  getKey,
+  isKeychainAvailable,
+  storeKey,
+} from "./keychain.js";
 
 const DB_NAME = "vault.db";
 const HISTORY_KEEP = 10;
@@ -130,7 +135,9 @@ export class SqliteBackend implements VaultBackend {
 
     if (existing) {
       const maxVersion = this.db
-        .query("SELECT MAX(version) as max_v FROM secrets_history WHERE name = ?")
+        .query(
+          "SELECT MAX(version) as max_v FROM secrets_history WHERE name = ?",
+        )
         .get(name) as { max_v: number | null } | null;
       const nextVersion = (maxVersion?.max_v ?? 0) + 1;
 
@@ -252,7 +259,10 @@ export class SqliteBackend implements VaultBackend {
     }));
   }
 
-  async getHistoryVersion(name: string, version: number): Promise<string | null> {
+  async getHistoryVersion(
+    name: string,
+    version: number,
+  ): Promise<string | null> {
     const key = this.requireKey();
 
     const row = this.db

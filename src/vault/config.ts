@@ -17,6 +17,7 @@
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { errorMessage } from "../utils/errors.js";
 
 export type BackendType = "sqlite" | "aws";
 
@@ -50,15 +51,19 @@ export function loadConfig(vaultPath: string): VaultConfig {
   let raw: string;
   try {
     raw = readFileSync(configPath, "utf-8");
-  } catch (err: any) {
-    throw new Error(`Failed to read vault config at ${configPath}: ${err.message}`);
+  } catch (err) {
+    throw new Error(
+      `Failed to read vault config at ${configPath}: ${errorMessage(err)}`,
+    );
   }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
-  } catch (err: any) {
-    throw new Error(`Invalid JSON in vault config ${configPath}: ${err.message}`);
+  } catch (err) {
+    throw new Error(
+      `Invalid JSON in vault config ${configPath}: ${errorMessage(err)}`,
+    );
   }
 
   return normalizeConfig(parsed, configPath);
@@ -70,13 +75,19 @@ export function loadConfig(vaultPath: string): VaultConfig {
 export function saveConfig(vaultPath: string, config: VaultConfig): void {
   const configPath = join(vaultPath, CONFIG_FILE);
   const normalized = normalizeConfig(config, configPath);
-  writeFileSync(configPath, `${JSON.stringify(normalized, null, 2)}\n`, "utf-8");
+  writeFileSync(
+    configPath,
+    `${JSON.stringify(normalized, null, 2)}\n`,
+    "utf-8",
+  );
 }
 
 /**
  * Resolve the effective AWS region, honoring config -> AWS_REGION -> AWS_DEFAULT_REGION.
  */
-export function resolveAwsRegion(config: AwsBackendConfig | undefined): string | undefined {
+export function resolveAwsRegion(
+  config: AwsBackendConfig | undefined,
+): string | undefined {
   return (
     config?.region ||
     process.env.AWS_REGION ||
